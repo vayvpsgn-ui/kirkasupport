@@ -2,11 +2,15 @@ import asyncio
 import logging
 import os
 import random
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
+# Токен вашего бота поддержки
 BOT_TOKEN = "8740416374:AAH-5SG5WK2lEW8Iy29pytxsFyNr0lVGebA"
+
+# Ваш личный Telegram ID
 ADMIN_ID = 6614617463
 
 USERS_FILE = "users.txt"
@@ -119,6 +123,7 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# Кнопки для панели администратора
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="👥 Список игроков"), KeyboardButton(text="😂 Анекдот")],
@@ -142,7 +147,7 @@ def save_user(user_id, username, full_name):
         for uid, info in users.items():
             f.write(f"{uid}:{info}\n")
 
-# Старт бота
+# Команда /start
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
@@ -163,7 +168,7 @@ async def start_cmd(message: types.Message):
         parse_mode="Markdown"
     )
 
-# 1. ОБРАБОТКА КНОПКИ: "📖 Подсказка по командам"
+# Подсказка по командам
 @dp.message(F.chat.id == ADMIN_ID, F.text.in_(["📖 Подсказка по командам", "/help", "/admin"]))
 async def show_help(message: types.Message):
     help_text = (
@@ -176,7 +181,7 @@ async def show_help(message: types.Message):
     )
     await message.answer(help_text, parse_mode="Markdown")
 
-# 2. ОБРАБОТКА КНОПКИ: "👥 Список игроков"
+# Список пользователей
 @dp.message(F.chat.id == ADMIN_ID, F.text.in_(["👥 Список игроков", "/users"]))
 async def list_users(message: types.Message):
     if not os.path.exists(USERS_FILE):
@@ -198,14 +203,14 @@ async def list_users(message: types.Message):
     text += "\nНаписать игроку: `/send <ID> <текст>`"
     await message.answer(text, parse_mode="Markdown")
 
-# 3. ОБРАБОТКА КНОПКИ: "😂 Анекдот" (работает и для админа, и для игроков)
+# Выдача анекдота
 @dp.message(F.text.in_(["😂 Анекдот", "/joke", "/anekdot", "/шутка"]))
 async def send_joke(message: types.Message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
     joke = random.choice(JOKES)
     await message.answer(joke)
 
-# Прямое сообщение игроку по ID
+# Отправка сообщения конкретному пользователю
 @dp.message(F.chat.id == ADMIN_ID, Command("send"))
 async def send_by_id(message: types.Message):
     args = message.text.split(maxsplit=2)
@@ -222,7 +227,7 @@ async def send_by_id(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка отправки: {e}")
 
-# Рассылка всем игрокам
+# Рассылка всем
 @dp.message(F.chat.id == ADMIN_ID, Command("broadcast"))
 async def broadcast_msg(message: types.Message):
     args = message.text.split(maxsplit=1)
@@ -249,7 +254,7 @@ async def broadcast_msg(message: types.Message):
             
     await message.answer(f"✅ Рассылка отправлена {count} игрокам.")
 
-# Ответ админа через Reply
+# Ответ через Reply
 @dp.message(F.chat.id == ADMIN_ID, F.reply_to_message)
 async def reply_to_user(message: types.Message):
     reply = message.reply_to_message
@@ -263,7 +268,7 @@ async def reply_to_user(message: types.Message):
     else:
         await message.answer("У игрока скрыт аккаунт. Ответьте командой:\n`/send ID текст`", parse_mode="Markdown")
 
-# Пересылка любого другого сообщения от игроков администратору
+# Пересылка любого другого входящего сообщения разработчику
 @dp.message(F.chat.id != ADMIN_ID)
 async def forward_to_admin(message: types.Message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
@@ -277,8 +282,22 @@ async def forward_to_admin(message: types.Message):
     await bot.send_message(chat_id=ADMIN_ID, text=user_info, parse_mode="Markdown")
     await message.copy_to(chat_id=ADMIN_ID)
 
+# Простой веб-сервер, чтобы Render не закрывал бесплатный Web Service
+async def health_check(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
 async def main():
     print("Бот поддержки запущен!")
+    await start_web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
