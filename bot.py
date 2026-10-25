@@ -2,20 +2,18 @@ import asyncio
 import logging
 import os
 import random
+from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
-# Токен вашего бота поддержки
 BOT_TOKEN = "8740416374:AAH-5SG5WK2lEW8Iy29pytxsFyNr0lVGebA"
-
-# Ваш личный Telegram ID
 ADMIN_ID = 6614617463
 
 USERS_FILE = "users.txt"
 
-# 100 разноплановых анекдотов
+# База из 100 разноплановых анекдотов
 JOKES = [
     "— Ты кем работаешь?\n— Ландшафтным дизайнером.\n— Ого!\n— Да на бульдозере снег гребу.",
     "Вышел на пенсию. Денег нет, здоровья нет, времени полно. Сижу, кайфую.",
@@ -123,109 +121,152 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Кнопки для панели администратора
+# Клавиатура администратора
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="👥 Список игроков"), KeyboardButton(text="😂 Анекдот")],
-        [KeyboardButton(text="📖 Подсказка по командам")]
+        [KeyboardButton(text="👥 Список игроков"), KeyboardButton(text="📊 Статистика")],
+        [KeyboardButton(text="😂 Анекдот"), KeyboardButton(text="📖 Подсказка по командам")]
+    ],
+    resize_keyboard=True
+)
+
+# Клавиатура для обычных игроков
+user_keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="ℹ️ Об игре"), KeyboardButton(text="😂 Анекдот")]
     ],
     resize_keyboard=True
 )
 
 def save_user(user_id, username, full_name):
-    users = {}
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                if ":" in line:
-                    uid, rest = line.strip().split(":", 1)
-                    users[uid] = rest
-    
-    users[str(user_id)] = f"@{username or 'нет'} | {full_name}"
-    
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        for uid, info in users.items():
-            f.write(f"{uid}:{info}\n")
+    """Надежное сохранение пользователя без поломки файла."""
+    try:
+        users = {}
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if ":" in line:
+                        parts = line.split(":", 1)
+                        users[parts[0].strip()] = parts[1].strip()
+
+        uname = f"@{username}" if username else "нет username"
+        users[str(user_id)] = f"{uname} | {full_name or 'Аноним'}"
+
+        with open(USERS_FILE, "w", encoding="utf-8") as f:
+            for uid, info in users.items():
+                f.write(f"{uid}:{info}\n")
+    except Exception as e:
+        logging.error(f"Ошибка сохранения пользователя: {e}")
 
 # Команда /start
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
-    
+
     if message.from_user.id == ADMIN_ID:
         await message.answer(
-            "👑 **Панель администратора подключена!**\n\n"
-            "Используйте кнопки внизу для быстрого управления.",
+            "👑 **Панель администратора готова к работе!**\n\n"
+            "Используйте кнопки под строкой ввода для управления ботом.",
             reply_markup=admin_keyboard,
             parse_mode="Markdown"
         )
         return
 
     await message.answer(
-        "👋 Привет! Это служба поддержки игры **Bouncy Pickaxe**.\n\n"
-        "Опишите вашу проблему или баг — разработчик ответит прямо здесь!\n\n"
-        "😂 А если скучно, напишите команду `/joke` — расскажу анекдот.",
+        "👋 Привет! Это официальная служба поддержки игры **Bouncy Pickaxe**.\n\n"
+        "💬 Напишите сюда свой вопрос, отзыв или найденный баг — разработчик получит его напрямую и ответит вам в этом чате!\n\n"
+        "🎮 Нажмите кнопку **«ℹ️ Об игре»** для информации или **«😂 Анекдот»**, если скучно.",
+        reply_markup=user_keyboard,
         parse_mode="Markdown"
     )
 
-# Подсказка по командам
+# Кнопка «ℹ️ Об игре»
+@dp.message(F.text.in_(["ℹ️ Об игре", "/about", "/game"]))
+async def about_game(message: types.Message):
+    text = (
+        "⛏ **Bouncy Pickaxe** — динамичная аркадная игра!\n\n"
+        "✨ *Советы:* прыгайте выше, собирайте бонусы и прокачивайте кирку.\n"
+        "🐞 Если игра крашнулась или не сохранился прогресс — напишите прямо в этот чат подробности и прикрепите скриншот!"
+    )
+    await message.answer(text, parse_mode="Markdown")
+
+# 1. Шпаргалка команд
 @dp.message(F.chat.id == ADMIN_ID, F.text.in_(["📖 Подсказка по командам", "/help", "/admin"]))
 async def show_help(message: types.Message):
     help_text = (
-        "🛠 **Шпаргалка команд администратора:**\n\n"
-        "👥 `/users` — список пользователей с их ID\n"
-        "💬 `/send <ID> <сообщение>` — написать игроку по ID\n"
-        "📢 `/broadcast <сообщение>` — рассылка всем зарегистрированным игрокам\n"
-        "😂 `/joke` — случайный анекдот\n\n"
-        "💡 **Как отвечать:** просто нажмите **Reply (Ответить)** на пересланное сообщение игрока!"
+        "🛠 **Панель управления администратора:**\n\n"
+        "👥 `/users` — список зарегистрированных игроков\n"
+        "📊 `/stats` — число пользователей в базе\n"
+        "💬 `/send <ID> <сообщение>` — написать игроку по его ID\n"
+        "📢 `/broadcast <сообщение>` — рассылка всем игрокам\n"
+        "😂 `/joke` — анекдот\n\n"
+        "💡 *Как ответить игроку:* просто нажмите **Reply (Ответить)** на карточку обращения!"
     )
     await message.answer(help_text, parse_mode="Markdown")
 
-# Список пользователей
+# 2. Статистика
+@dp.message(F.chat.id == ADMIN_ID, F.text.in_(["📊 Статистика", "/stats"]))
+async def get_stats(message: types.Message):
+    if not os.path.exists(USERS_FILE):
+        await message.answer("📊 База пуста (0 пользователей).")
+        return
+
+    with open(USERS_FILE, "r", encoding="utf-8") as f:
+        count = sum(1 for line in f if ":" in line)
+
+    await message.answer(f"📊 Всего зарегистрировано игроков: **{count}**", parse_mode="Markdown")
+
+# 3. Список пользователей (с защитой от зависания)
 @dp.message(F.chat.id == ADMIN_ID, F.text.in_(["👥 Список игроков", "/users"]))
 async def list_users(message: types.Message):
     if not os.path.exists(USERS_FILE):
-        await message.answer("Список игроков пока пуст.")
+        await message.answer("👥 В базе пока нет сохраненных игроков.")
         return
-    
-    with open(USERS_FILE, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-        
-    if not lines:
-        await message.answer("Список игроков пока пуст.")
-        return
-        
-    text = "👥 **Список пользователей бота:**\n\n"
-    for line in lines[-50:]:
-        uid, info = line.strip().split(":", 1)
-        text += f"• `{uid}` — {info}\n"
-        
-    text += "\nНаписать игроку: `/send <ID> <текст>`"
-    await message.answer(text, parse_mode="Markdown")
 
-# Выдача анекдота
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            lines = [l.strip() for l in f if ":" in l]
+
+        if not lines:
+            await message.answer("👥 В базе пока нет записей.")
+            return
+
+        text = f"👥 **Список пользователей (всего {len(lines)}):**\n\n"
+        for line in lines[-40:]:  # последние 40 игроков
+            parts = line.split(":", 1)
+            uid = parts[0].strip()
+            info = parts[1].strip()
+            text += f"• `{uid}` — {info}\n"
+
+        text += "\nНаписать: `/send <ID> <текст>`"
+        await message.answer(text, parse_mode="Markdown")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при чтении базы: {e}")
+
+# 4. Анекдот
 @dp.message(F.text.in_(["😂 Анекдот", "/joke", "/anekdot", "/шутка"]))
 async def send_joke(message: types.Message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
     joke = random.choice(JOKES)
     await message.answer(joke)
 
-# Отправка сообщения конкретному пользователю
+# Отправка игроку по ID
 @dp.message(F.chat.id == ADMIN_ID, Command("send"))
 async def send_by_id(message: types.Message):
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
-        await message.answer("Формат: `/send <ID> <сообщение>`", parse_mode="Markdown")
+        await message.answer("Формат: `/send <ID> <текст>`", parse_mode="Markdown")
         return
-    
-    user_id = args[1]
-    text = args[2]
+
+    target_id = args[1].strip()
+    msg_text = args[2].strip()
 
     try:
-        await bot.send_message(chat_id=user_id, text=f"👨‍💻 **Сообщение от поддержки:**\n\n{text}")
-        await message.answer("✅ Доставлено игроку!")
+        await bot.send_message(chat_id=target_id, text=f"👨‍💻 **Ответ от службы поддержки:**\n\n{msg_text}", parse_mode="Markdown")
+        await message.answer("✅ Доставлено!")
     except Exception as e:
-        await message.answer(f"❌ Ошибка отправки: {e}")
+        await message.answer(f"❌ Не удалось отправить (возможно, бот заблокирован игроком): {e}")
 
 # Рассылка всем
 @dp.message(F.chat.id == ADMIN_ID, Command("broadcast"))
@@ -234,55 +275,86 @@ async def broadcast_msg(message: types.Message):
     if len(args) < 2:
         await message.answer("Формат: `/broadcast <текст рассылки>`", parse_mode="Markdown")
         return
-    
-    broadcast_text = args[1]
+
+    text = args[1].strip()
     if not os.path.exists(USERS_FILE):
-        await message.answer("Список игроков пуст.")
+        await message.answer("База пользователей пуста.")
         return
-        
+
     with open(USERS_FILE, "r", encoding="utf-8") as f:
-        users = [line.strip().split(":", 1)[0] for line in f if ":" in line]
-        
-    count = 0
+        users = [l.split(":", 1)[0].strip() for l in f if ":" in l]
+
+    sent = 0
     for uid in users:
         try:
-            await bot.send_message(chat_id=uid, text=f"📢 **Новости игры:**\n\n{broadcast_text}")
-            count += 1
+            await bot.send_message(chat_id=uid, text=f"📢 **Новости игры Bouncy Pickaxe:**\n\n{text}", parse_mode="Markdown")
+            sent += 1
             await asyncio.sleep(0.05)
         except Exception:
             pass
-            
-    await message.answer(f"✅ Рассылка отправлена {count} игрокам.")
 
-# Ответ через Reply
+    await message.answer(f"✅ Рассылка доставлена {sent} из {len(users)} игроков.")
+
+# Ответ через Reply администратора
 @dp.message(F.chat.id == ADMIN_ID, F.reply_to_message)
-async def reply_to_user(message: types.Message):
+async def reply_handler(message: types.Message):
+    target_id = None
     reply = message.reply_to_message
+
+    # Вариант 1: обычный forward
     if reply.forward_from:
         target_id = reply.forward_from.id
+    # Вариант 2: парсинг ID из системной шапки карточки (для скрытых аккаунтов)
+    elif reply.text and "ID: `" in reply.text:
         try:
-            await message.copy_to(chat_id=target_id)
-            await message.answer("✅ Ответ доставлен!")
+            target_id = reply.text.split("ID: `")[1].split("`")[0]
+        except Exception:
+            pass
+
+    if target_id:
+        try:
+            await bot.send_message(
+                chat_id=target_id,
+                text=f"👨‍💻 **Ответ службы поддержки:**\n\n{message.text or 'Ответ во вложении'}"
+            )
+            # Если отправлено медиа (фото, стикер, голосовое)
+            if message.photo:
+                await bot.send_photo(chat_id=target_id, photo=message.photo[-1].file_id)
+            elif message.document:
+                await bot.send_document(chat_id=target_id, document=message.document.file_id)
+            await message.answer("✅ Ответ успешно передан игроку!")
         except Exception as e:
             await message.answer(f"❌ Ошибка отправки: {e}")
     else:
-        await message.answer("У игрока скрыт аккаунт. Ответьте командой:\n`/send ID текст`", parse_mode="Markdown")
+        await message.answer("⚠️ Не удалось определить ID игрока. Воспользуйтесь командой:\n`/send <ID> <текст>`", parse_mode="Markdown")
 
-# Пересылка любого другого входящего сообщения разработчику
+# Пересылка любого входящего обращения разработчику
 @dp.message(F.chat.id != ADMIN_ID)
-async def forward_to_admin(message: types.Message):
+async def handle_user_ticket(message: types.Message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
-    await message.answer("✅ Сообщение принято! Разработчик скоро ответит.")
+
+    time_now = datetime.now().strftime("%H:%M:%S")
+    await message.answer(f"✅ Ваше сообщение получено в {time_now}! Разработчик ответит вам прямо в этом чате.")
 
     user_info = (
-        f"📩 **Новое обращение!**\n"
-        f"От: {message.from_user.full_name} (@{message.from_user.username or 'нет'})\n"
-        f"ID: `{message.from_user.id}`"
+        f"📩 **Новое обращение в поддержку!**\n"
+        f"Имя: {message.from_user.full_name}\n"
+        f"Username: @{message.from_user.username or 'скрыт'}\n"
+        f"ID: `{message.from_user.id}`\n"
+        f"Время: {time_now}\n"
+        f"➖➖➖➖➖➖➖➖➖➖\n"
+        f"👇 *Текст сообщения:*"
     )
-    await bot.send_message(chat_id=ADMIN_ID, text=user_info, parse_mode="Markdown")
-    await message.copy_to(chat_id=ADMIN_ID)
 
-# Простой веб-сервер, чтобы Render не закрывал бесплатный Web Service
+    try:
+        # Отправляем карточку с ID в чат админа
+        await bot.send_message(chat_id=ADMIN_ID, text=user_info, parse_mode="Markdown")
+        # Копируем само сообщение (текст, фото, голос) админу
+        await message.copy_to(chat_id=ADMIN_ID)
+    except Exception as e:
+        logging.error(f"Ошибка пересылки админу: {e}")
+
+# Веб-сервер для предотвращения остановки на Render
 async def health_check(request):
     return web.Response(text="Bot is running!")
 
