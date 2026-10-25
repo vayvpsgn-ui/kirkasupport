@@ -1,4 +1,5 @@
 import asyncio
+import io
 import logging
 import os
 import random
@@ -6,14 +7,24 @@ from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import (
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    LabeledPrice,
+    PreCheckoutQuery,
+    BufferedInputFile
+)
+from PIL import Image, ImageDraw, ImageFont
 
+# Токен вашего бота поддержки
 BOT_TOKEN = "8740416374:AAH-5SG5WK2lEW8Iy29pytxsFyNr0lVGebA"
+
+# Ваш личный Telegram ID
 ADMIN_ID = 6614617463
 
 USERS_FILE = "users.txt"
 
-# База из 100 разноплановых анекдотов
+# 100 разноплановых анекдотов
 JOKES = [
     "— Ты кем работаешь?\n— Ландшафтным дизайнером.\n— Ого!\n— Да на бульдозере снег гребу.",
     "Вышел на пенсию. Денег нет, здоровья нет, времени полно. Сижу, кайфую.",
@@ -117,29 +128,40 @@ JOKES = [
     "— Дорогой, ты помнишь, какой сегодня день?\n— Конечно! Пятница!\n— Нет, сегодня день нашей свадьбы!\n— Одно другому не мешает, наливай."
 ]
 
+# Награды: (Название, шанс, цвет карточки RGB)
+ROULETTE_DATA = [
+    ("👑 Королевская Утка", 0.005, (255, 215, 0)),    # Золотой (0.5%)
+    ("🧰 2 Кейса", 0.030, (148, 0, 211)),             # Фиолетовый (3.0%)
+    ("🦆 Скин Утки", 0.065, (30, 144, 255)),          # Синий (6.5%)
+    ("🍭 5000 Леденцов", 0.250, (255, 105, 180)),     # Розовый (25.0%)
+    ("🪙 5000 Монет", 0.250, (255, 215, 0)),          # Желтый (25.0%)
+    ("💨 Ничего / Удачи!", 0.400, (105, 105, 105))     # Серый (40.0%)
+]
+
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Клавиатура администратора
+# Кнопки для администратора
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="👥 Список игроков"), KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="😂 Анекдот"), KeyboardButton(text="📖 Подсказка по командам")]
+        [KeyboardButton(text="☕ Кофе автору + Рулетка (20 ⭐)"), KeyboardButton(text="😂 Анекдот")],
+        [KeyboardButton(text="📖 Подсказка по командам")]
     ],
     resize_keyboard=True
 )
 
-# Клавиатура для обычных игроков
+# Кнопки для обычных игроков
 user_keyboard = ReplyKeyboardMarkup(
     keyboard=[
+        [KeyboardButton(text="☕ Кофе автору + Рулетка (20 ⭐)")],
         [KeyboardButton(text="ℹ️ Об игре"), KeyboardButton(text="😂 Анекдот")]
     ],
     resize_keyboard=True
 )
 
 def save_user(user_id, username, full_name):
-    """Надежное сохранение пользователя без поломки файла."""
     try:
         users = {}
         if os.path.exists(USERS_FILE):
@@ -147,8 +169,8 @@ def save_user(user_id, username, full_name):
                 for line in f:
                     line = line.strip()
                     if ":" in line:
-                        parts = line.split(":", 1)
-                        users[parts[0].strip()] = parts[1].strip()
+                        p = line.split(":", 1)
+                        users[p[0].strip()] = p[1].strip()
 
         uname = f"@{username}" if username else "нет username"
         users[str(user_id)] = f"{uname} | {full_name or 'Аноним'}"
@@ -157,7 +179,82 @@ def save_user(user_id, username, full_name):
             for uid, info in users.items():
                 f.write(f"{uid}:{info}\n")
     except Exception as e:
-        logging.error(f"Ошибка сохранения пользователя: {e}")
+        logging.error(f"Ошибка сохранения: {e}")
+
+# Генерация GIF рулетки с плавной остановкой на выигранном призе
+def generate_roulette_gif(winning_item_title: str) -> io.BytesIO:
+    width, height = 480, 160
+    card_w, card_h = 130, 110
+    card_gap = 15
+    total_step = card_w + card_gap
+
+    names = [item[0] for item in ROULETTE_DATA]
+    color_map = {item[0]: item[2] for item in ROULETTE_DATA}
+
+    tape = [random.choice(names) for _ in range(18)]
+    winning_index = 18
+    tape.append(winning_item_title)
+    tape += [random.choice(names) for _ in range(6)]
+
+    target_center_x = width // 2
+    final_offset = (winning_index * total_step) + (card_w // 2) - target_center_x
+
+    frames = []
+    font = ImageFont.load_default()
+
+    total_frames = 26
+    for f in range(total_frames):
+        progress = f / (total_frames - 1)
+        ease = 1 - (1 - progress) ** 2.8
+        current_offset = int(final_offset * ease)
+
+        img = Image.new("RGB", (width, height), (22, 24, 30))
+        draw = ImageDraw.Draw(img)
+
+        draw.rectangle([5, 5, width - 6, height - 6], outline=(50, 55, 70), width=2)
+
+        for i, title in enumerate(tape):
+            x1 = 20 + i * total_step - current_offset
+            x2 = x1 + card_w
+            y1 = 25
+            y2 = y1 + card_h
+
+            if x2 < -60 or x1 > width + 60:
+                continue
+
+            color = color_map.get(title, (100, 100, 100))
+            draw.rounded_rectangle([x1, y1, x2, y2], radius=8, fill=(35, 38, 48), outline=color, width=2)
+
+            words = title.split()
+            line1 = " ".join(words[:2]) if len(words) > 1 else title
+            line2 = " ".join(words[2:]) if len(words) > 2 else ""
+
+            draw.text((x1 + 10, y1 + 35), line1, fill=(240, 240, 240), font=font)
+            if line2:
+                draw.text((x1 + 10, y1 + 55), line2, fill=color, font=font)
+
+        # Центральный указатель стрелки
+        cx = width // 2
+        draw.polygon([(cx - 9, 8), (cx + 9, 8), (cx, 24)], fill=(255, 69, 0))
+        draw.polygon([(cx - 9, height - 8), (cx + 9, height - 8), (cx, height - 24)], fill=(255, 69, 0))
+        draw.line([(cx, 24), (cx, height - 24)], fill=(255, 69, 0), width=2)
+
+        frames.append(img)
+
+    for _ in range(5):
+        frames.append(frames[-1])
+
+    output = io.BytesIO()
+    frames[0].save(
+        output,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=90,
+        loop=0
+    )
+    output.seek(0)
+    return output
 
 # Команда /start
 @dp.message(CommandStart())
@@ -175,37 +272,106 @@ async def start_cmd(message: types.Message):
 
     await message.answer(
         "👋 Привет! Это официальная служба поддержки игры **Bouncy Pickaxe**.\n\n"
-        "💬 Напишите сюда свой вопрос, отзыв или найденный баг — разработчик получит его напрямую и ответит вам в этом чате!\n\n"
-        "🎮 Нажмите кнопку **«ℹ️ Об игре»** для информации или **«😂 Анекдот»**, если скучно.",
+        "💬 Напишите сюда свой вопрос, баг или отзыв — разработчик ответит прямо в этом чате!\n\n"
+        "☕ Нажмите **«☕ Кофе автору + Рулетка (20 ⭐)»**, чтобы угостить автора кофе и испытать удачу в визуальной рулетке!",
         reply_markup=user_keyboard,
         parse_mode="Markdown"
     )
 
-# Кнопка «ℹ️ Об игре»
+# 1. Отправка инвойса на 20 звёзд
+@dp.message(F.text.in_(["☕ Кофе автору + Рулетка (20 ⭐)", "/coffee", "/donate"]))
+async def coffee_invoice(message: types.Message):
+    save_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
+
+    prices = [LabeledPrice(label="Чашка кофе разработчику + Рулетка", amount=20)]
+
+    await bot.send_invoice(
+        chat_id=message.chat.id,
+        title="☕ Чашка кофе разработчику",
+        description=(
+            "Спасибо за поддержку игры Bouncy Pickaxe на 20 ⭐!\n\n"
+            "В подарок вы моментально крутите рулетку с призами:\n"
+            "• 👑 Королевская Утка (0.5%)\n"
+            "• 🧰 2 Кейса (3%)\n"
+            "• 🦆 Скин Утки (6.5%)\n"
+            "• 🍭 5000 Леденцов (25%)\n"
+            "• 🪙 5000 Монет (25%)\n"
+            "• 💨 Ничего / Удачи!"
+        ),
+        payload="coffee_roulette_visual",
+        currency="XTR",
+        prices=prices,
+        provider_token=""
+    )
+
+# 2. Подтверждение платежа
+@dp.pre_checkout_query()
+async def process_pre_checkout(pre_checkout: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
+
+# 3. Успешная оплата: генерация анимации и выдача уведомлений
+@dp.message(F.successful_payment)
+async def process_roulette_spin(message: types.Message):
+    user = message.from_user
+    save_user(user.id, user.username, user.full_name)
+
+    prizes, weights, _ = zip(*[(item[0], item[1], item[2]) for item in ROULETTE_DATA])
+    dropped_prize = random.choices(prizes, weights=weights, k=1)[0]
+
+    wait_msg = await message.answer("☕ **Спасибо за поддержку!** ❤️\n🎰 *Заряжаем барабан рулетки...*", parse_mode="Markdown")
+
+    loop = asyncio.get_event_loop()
+    gif_bytes = await loop.run_in_executor(None, generate_roulette_gif, dropped_prize)
+    gif_file = BufferedInputFile(gif_bytes.getvalue(), filename="roulette.gif")
+
+    caption_text = (
+        f"🎰 **РУЛЕТКА ОСТАНОВИЛАСЬ!**\n\n"
+        f"🎯 Выпало: **{dropped_prize}**\n\n"
+    )
+    if "Ничего" in dropped_prize:
+        caption_text += "В этот раз не повезло, но разработчик искренне благодарен за поддержку игры!"
+    else:
+        caption_text += "🎉 Поздравляем! Разработчик уже получил ваш выигрыш и выдаст награду прямо в этом чате."
+
+    await wait_msg.delete()
+    await message.answer_animation(animation=gif_file, caption=caption_text, parse_mode="Markdown")
+
+    # Уведомление вам с готовой кнопкой/шаблоном для ответа
+    admin_alert = (
+        "🚨 **ДОНАТ 20 ЗВЁЗД + РУЛЕТКА!** 🚨\n\n"
+        f"👤 **Игрок:** {user.full_name} (@{user.username or 'нет username'})\n"
+        f"🆔 **ID:** `{user.id}`\n"
+        f"💰 **Оплата:** 20 ⭐ Telegram Stars\n"
+        f"🎁 **Выпало:** {dropped_prize}\n\n"
+        "👉 Чтобы начислить приз или написать игроку, используйте:\n`/send " + str(user.id) + " Ваш текст`"
+    )
+    await bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode="Markdown")
+
+# Об игре
 @dp.message(F.text.in_(["ℹ️ Об игре", "/about", "/game"]))
 async def about_game(message: types.Message):
     text = (
         "⛏ **Bouncy Pickaxe** — динамичная аркадная игра!\n\n"
         "✨ *Советы:* прыгайте выше, собирайте бонусы и прокачивайте кирку.\n"
-        "🐞 Если игра крашнулась или не сохранился прогресс — напишите прямо в этот чат подробности и прикрепите скриншот!"
+        "🐞 Если игра крашнулась или нашли баг — напишите прямо сюда текст со скриншотом!"
     )
     await message.answer(text, parse_mode="Markdown")
 
-# 1. Шпаргалка команд
+# Помощь администратору
 @dp.message(F.chat.id == ADMIN_ID, F.text.in_(["📖 Подсказка по командам", "/help", "/admin"]))
 async def show_help(message: types.Message):
     help_text = (
         "🛠 **Панель управления администратора:**\n\n"
         "👥 `/users` — список зарегистрированных игроков\n"
-        "📊 `/stats` — число пользователей в базе\n"
-        "💬 `/send <ID> <сообщение>` — написать игроку по его ID\n"
+        "📊 `/stats` — число игроков в базе\n"
+        "💬 `/send <ID> <сообщение>` — написать игроку по ID\n"
         "📢 `/broadcast <сообщение>` — рассылка всем игрокам\n"
         "😂 `/joke` — анекдот\n\n"
-        "💡 *Как ответить игроку:* просто нажмите **Reply (Ответить)** на карточку обращения!"
+        "💡 *Как ответить:* нажмите Reply на сообщение игрока или используйте команду `/send ID текст`"
     )
     await message.answer(help_text, parse_mode="Markdown")
 
-# 2. Статистика
+# Статистика
 @dp.message(F.chat.id == ADMIN_ID, F.text.in_(["📊 Статистика", "/stats"]))
 async def get_stats(message: types.Message):
     if not os.path.exists(USERS_FILE):
@@ -215,13 +381,13 @@ async def get_stats(message: types.Message):
     with open(USERS_FILE, "r", encoding="utf-8") as f:
         count = sum(1 for line in f if ":" in line)
 
-    await message.answer(f"📊 Всего зарегистрировано игроков: **{count}**", parse_mode="Markdown")
+    await message.answer(f"📊 Всего игроков в базе: **{count}**", parse_mode="Markdown")
 
-# 3. Список пользователей (с защитой от зависания)
+# Список игроков
 @dp.message(F.chat.id == ADMIN_ID, F.text.in_(["👥 Список игроков", "/users"]))
 async def list_users(message: types.Message):
     if not os.path.exists(USERS_FILE):
-        await message.answer("👥 В базе пока нет сохраненных игроков.")
+        await message.answer("👥 В базе пока нет игроков.")
         return
 
     try:
@@ -229,29 +395,29 @@ async def list_users(message: types.Message):
             lines = [l.strip() for l in f if ":" in l]
 
         if not lines:
-            await message.answer("👥 В базе пока нет записей.")
+            await message.answer("👥 В базе пока нет игроков.")
             return
 
         text = f"👥 **Список пользователей (всего {len(lines)}):**\n\n"
-        for line in lines[-40:]:  # последние 40 игроков
+        for line in lines[-40:]:
             parts = line.split(":", 1)
             uid = parts[0].strip()
             info = parts[1].strip()
             text += f"• `{uid}` — {info}\n"
 
-        text += "\nНаписать: `/send <ID> <текст>`"
+        text += "\nНаписать игроку: `/send <ID> <текст>`"
         await message.answer(text, parse_mode="Markdown")
     except Exception as e:
-        await message.answer(f"❌ Ошибка при чтении базы: {e}")
+        await message.answer(f"❌ Ошибка чтения: {e}")
 
-# 4. Анекдот
+# Анекдоты
 @dp.message(F.text.in_(["😂 Анекдот", "/joke", "/anekdot", "/шутка"]))
 async def send_joke(message: types.Message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
     joke = random.choice(JOKES)
     await message.answer(joke)
 
-# Отправка игроку по ID
+# Прямая отправка игроку по ID
 @dp.message(F.chat.id == ADMIN_ID, Command("send"))
 async def send_by_id(message: types.Message):
     args = message.text.split(maxsplit=2)
@@ -266,7 +432,7 @@ async def send_by_id(message: types.Message):
         await bot.send_message(chat_id=target_id, text=f"👨‍💻 **Ответ от службы поддержки:**\n\n{msg_text}", parse_mode="Markdown")
         await message.answer("✅ Доставлено!")
     except Exception as e:
-        await message.answer(f"❌ Не удалось отправить (возможно, бот заблокирован игроком): {e}")
+        await message.answer(f"❌ Не удалось доставить: {e}")
 
 # Рассылка всем
 @dp.message(F.chat.id == ADMIN_ID, Command("broadcast"))
@@ -301,10 +467,8 @@ async def reply_handler(message: types.Message):
     target_id = None
     reply = message.reply_to_message
 
-    # Вариант 1: обычный forward
     if reply.forward_from:
         target_id = reply.forward_from.id
-    # Вариант 2: парсинг ID из системной шапки карточки (для скрытых аккаунтов)
     elif reply.text and "ID: `" in reply.text:
         try:
             target_id = reply.text.split("ID: `")[1].split("`")[0]
@@ -317,18 +481,17 @@ async def reply_handler(message: types.Message):
                 chat_id=target_id,
                 text=f"👨‍💻 **Ответ службы поддержки:**\n\n{message.text or 'Ответ во вложении'}"
             )
-            # Если отправлено медиа (фото, стикер, голосовое)
             if message.photo:
                 await bot.send_photo(chat_id=target_id, photo=message.photo[-1].file_id)
             elif message.document:
                 await bot.send_document(chat_id=target_id, document=message.document.file_id)
-            await message.answer("✅ Ответ успешно передан игроку!")
+            await message.answer("✅ Ответ передан игроку!")
         except Exception as e:
             await message.answer(f"❌ Ошибка отправки: {e}")
     else:
-        await message.answer("⚠️ Не удалось определить ID игрока. Воспользуйтесь командой:\n`/send <ID> <текст>`", parse_mode="Markdown")
+        await message.answer("⚠️ Не удалось определить ID игрока. Ответьте командой:\n`/send <ID> <текст>`", parse_mode="Markdown")
 
-# Пересылка любого входящего обращения разработчику
+# Входящие сообщения игроков
 @dp.message(F.chat.id != ADMIN_ID)
 async def handle_user_ticket(message: types.Message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
@@ -347,14 +510,12 @@ async def handle_user_ticket(message: types.Message):
     )
 
     try:
-        # Отправляем карточку с ID в чат админа
         await bot.send_message(chat_id=ADMIN_ID, text=user_info, parse_mode="Markdown")
-        # Копируем само сообщение (текст, фото, голос) админу
         await message.copy_to(chat_id=ADMIN_ID)
     except Exception as e:
-        logging.error(f"Ошибка пересылки админу: {e}")
+        logging.error(f"Ошибка пересылки: {e}")
 
-# Веб-сервер для предотвращения остановки на Render
+# Веб-сервер для Render и UptimeRobot
 async def health_check(request):
     return web.Response(text="Bot is running!")
 
