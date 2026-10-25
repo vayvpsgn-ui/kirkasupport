@@ -146,7 +146,7 @@ dp = Dispatcher()
 admin_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="👥 Список игроков"), KeyboardButton(text="📊 Статистика")],
-        [KeyboardButton(text="☕ Кофе автору + Рулетка (20 ⭐)"), KeyboardButton(text="😂 Анекдот")],
+        [KeyboardButton(text="☕ Кофе + Случайная награда (20 ⭐)"), KeyboardButton(text="😂 Анекдот")],
         [KeyboardButton(text="📖 Подсказка по командам")]
     ],
     resize_keyboard=True
@@ -155,7 +155,7 @@ admin_keyboard = ReplyKeyboardMarkup(
 # Кнопки для обычных игроков
 user_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="☕ Кофе автору + Рулетка (20 ⭐)")],
+        [KeyboardButton(text="☕ Кофе + Случайная награда (20 ⭐)")],
         [KeyboardButton(text="ℹ️ Об игре"), KeyboardButton(text="😂 Анекдот")]
     ],
     resize_keyboard=True
@@ -181,7 +181,7 @@ def save_user(user_id, username, full_name):
     except Exception as e:
         logging.error(f"Ошибка сохранения: {e}")
 
-# Генерация GIF рулетки с плавной остановкой на выигранном призе
+# Генерация GIF с плавной остановкой
 def generate_roulette_gif(winning_item_title: str) -> io.BytesIO:
     width, height = 480, 160
     card_w, card_h = 130, 110
@@ -233,7 +233,6 @@ def generate_roulette_gif(winning_item_title: str) -> io.BytesIO:
             if line2:
                 draw.text((x1 + 10, y1 + 55), line2, fill=color, font=font)
 
-        # Центральный указатель стрелки
         cx = width // 2
         draw.polygon([(cx - 9, 8), (cx + 9, 8), (cx, 24)], fill=(255, 69, 0))
         draw.polygon([(cx - 9, height - 8), (cx + 9, height - 8), (cx, height - 24)], fill=(255, 69, 0))
@@ -273,32 +272,23 @@ async def start_cmd(message: types.Message):
     await message.answer(
         "👋 Привет! Это официальная служба поддержки игры **Bouncy Pickaxe**.\n\n"
         "💬 Напишите сюда свой вопрос, баг или отзыв — разработчик ответит прямо в этом чате!\n\n"
-        "☕ Нажмите **«☕ Кофе автору + Рулетка (20 ⭐)»**, чтобы угостить автора кофе и испытать удачу в визуальной рулетке!",
+        "☕ Нажмите **«☕ Кофе + Случайная награда (20 ⭐)»**, чтобы угостить автора кофе и получить случайный подарок!",
         reply_markup=user_keyboard,
         parse_mode="Markdown"
     )
 
 # 1. Отправка инвойса на 20 звёзд
-@dp.message(F.text.in_(["☕ Кофе автору + Рулетка (20 ⭐)", "/coffee", "/donate"]))
+@dp.message(F.text.in_(["☕ Кофе + Случайная награда (20 ⭐)", "☕ Кофе автору + Рулетка (20 ⭐)", "/coffee", "/donate"]))
 async def coffee_invoice(message: types.Message):
     save_user(message.from_user.id, message.from_user.username, message.from_user.full_name)
 
-    prices = [LabeledPrice(label="Чашка кофе разработчику + Рулетка", amount=20)]
+    prices = [LabeledPrice(label="Чашка кофе разработчику", amount=20)]
 
     await bot.send_invoice(
         chat_id=message.chat.id,
         title="☕ Чашка кофе разработчику",
-        description=(
-            "Спасибо за поддержку игры Bouncy Pickaxe на 20 ⭐!\n\n"
-            "В подарок вы моментально крутите рулетку с призами:\n"
-            "• 👑 Королевская Утка (0.5%)\n"
-            "• 🧰 2 Кейса (3%)\n"
-            "• 🦆 Скин Утки (6.5%)\n"
-            "• 🍭 5000 Леденцов (25%)\n"
-            "• 🪙 5000 Монет (25%)\n"
-            "• 💨 Ничего / Удачи!"
-        ),
-        payload="coffee_roulette_visual",
+        description="Спасибо за поддержку игры Bouncy Pickaxe на 20 ⭐!\nВ знак благодарности вас ждёт случайная награда.",
+        payload="coffee_random_reward",
         currency="XTR",
         prices=prices,
         provider_token=""
@@ -309,7 +299,7 @@ async def coffee_invoice(message: types.Message):
 async def process_pre_checkout(pre_checkout: PreCheckoutQuery):
     await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
 
-# 3. Успешная оплата: генерация анимации и выдача уведомлений
+# 3. Успешная оплата
 @dp.message(F.successful_payment)
 async def process_roulette_spin(message: types.Message):
     user = message.from_user
@@ -318,32 +308,32 @@ async def process_roulette_spin(message: types.Message):
     prizes, weights, _ = zip(*[(item[0], item[1], item[2]) for item in ROULETTE_DATA])
     dropped_prize = random.choices(prizes, weights=weights, k=1)[0]
 
-    wait_msg = await message.answer("☕ **Спасибо за поддержку!** ❤️\n🎰 *Заряжаем барабан рулетки...*", parse_mode="Markdown")
+    wait_msg = await message.answer("☕ **Спасибо за чашку кофе!** ❤️\n🎁 *Определяем вашу награду...*", parse_mode="Markdown")
 
     loop = asyncio.get_event_loop()
     gif_bytes = await loop.run_in_executor(None, generate_roulette_gif, dropped_prize)
-    gif_file = BufferedInputFile(gif_bytes.getvalue(), filename="roulette.gif")
+    gif_file = BufferedInputFile(gif_bytes.getvalue(), filename="reward.gif")
 
     caption_text = (
-        f"🎰 **РУЛЕТКА ОСТАНОВИЛАСЬ!**\n\n"
+        f"🎁 **ИТОГ:**\n\n"
         f"🎯 Выпало: **{dropped_prize}**\n\n"
     )
     if "Ничего" in dropped_prize:
-        caption_text += "В этот раз не повезло, но разработчик искренне благодарен за поддержку игры!"
+        caption_text += "В этот раз без бонуса, но разработчик искренне благодарен за вашу поддержку!"
     else:
-        caption_text += "🎉 Поздравляем! Разработчик уже получил ваш выигрыш и выдаст награду прямо в этом чате."
+        caption_text += "🎉 Поздравляем! Разработчик уже видит ваш результат и свяжется с вами прямо в этом чате для выдачи."
 
     await wait_msg.delete()
     await message.answer_animation(animation=gif_file, caption=caption_text, parse_mode="Markdown")
 
-    # Уведомление вам с готовой кнопкой/шаблоном для ответа
+    # Уведомление вам
     admin_alert = (
-        "🚨 **ДОНАТ 20 ЗВЁЗД + РУЛЕТКА!** 🚨\n\n"
+        "🚨 **ДОНАТ 20 ЗВЁЗД НА КОФЕ!** 🚨\n\n"
         f"👤 **Игрок:** {user.full_name} (@{user.username or 'нет username'})\n"
         f"🆔 **ID:** `{user.id}`\n"
-        f"💰 **Оплата:** 20 ⭐ Telegram Stars\n"
+        f"💰 **Сумма:** 20 ⭐ Telegram Stars\n"
         f"🎁 **Выпало:** {dropped_prize}\n\n"
-        "👉 Чтобы начислить приз или написать игроку, используйте:\n`/send " + str(user.id) + " Ваш текст`"
+        "👉 Чтобы написать игроку или выдать приз, используйте:\n`/send " + str(user.id) + " Ваш текст`"
     )
     await bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode="Markdown")
 
